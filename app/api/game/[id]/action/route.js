@@ -15,6 +15,7 @@ import {
   toggleMortgage,
   endTurnManually,
   declareBankruptcy,
+  setStartingCash,
 } from "../../../../../lib/engine";
 
 export async function POST(req, { params }) {
@@ -29,6 +30,9 @@ export async function POST(req, { params }) {
     switch (type) {
       case "start":
         startGame(game, playerId);
+        break;
+      case "setStartingCash":
+        setStartingCash(game, playerId, body.amount);
         break;
       case "roll":
         rollDice(game, playerId);

@@ -2,7 +2,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { BOARD, GROUP_COLORS } from "../../../lib/board";
-import { gridPos, PLAYER_COLORS } from "../../../lib/layoutGrid";
+import { gridPos, gridPct, pawnOffset, PLAYER_COLORS } from "../../../lib/layoutGrid";
+import Dice3D from "../../../components/Dice3D";
+import CardModal from "../../../components/CardModal";
+import PropertiesPanel from "../../../components/PropertiesPanel";
+import TradePanel from "../../../components/TradePanel";
 
 function getOrCreatePlayerId() {
   let id = localStorage.getItem("monopoly_player_id");
@@ -13,6 +17,18 @@ function getOrCreatePlayerId() {
   return id;
 }
 
+const TILE_ICONS = {
+  go: "➡️",
+  jail: "🚔",
+  gotojail: "👮",
+  free: "🅿️",
+  tax: "💰",
+  chance: "❓",
+  chest: "🎁",
+  railroad: "🚂",
+  utility: "💡",
+};
+
 export default function RoomPage() {
   const { id: roomId } = useParams();
   const [game, setGame] = useState(null);
@@ -21,10 +37,15 @@ export default function RoomPage() {
   const [busy, setBusy] = useState(false);
   const [selectedTile, setSelectedTile] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
-  const pollRef = useRef(null);
   const [needsName, setNeedsName] = useState(false);
   const [joinName, setJoinName] = useState("");
   const [joining, setJoining] = useState(false);
+  const [rollToken, setRollToken] = useState(0);
+  const [activeCard, setActiveCard] = useState(null);
+  const pollRef = useRef(null);
+  const lastCardSeq = useRef(0);
+  const prevPositions = useRef({});
+  const [landedPawns, setLandedPawns] = useState({});
 
   useEffect(() => {
     const pid = getOrCreatePlayerId();
@@ -33,10 +54,10 @@ export default function RoomPage() {
     (async () => {
       const g = await refresh();
       if (!g) return;
+      lastCardSeq.current = g.cardSeq || 0;
       const alreadyIn = g.players.some((p) => p.id === pid);
       if (alreadyIn) return;
       if (name) {
-        // We've joined a room before on this device — try auto-rejoining with that name.
         try {
           const res = await fetch(`/api/game/${roomId}/join`, {
             method: "POST",
@@ -50,7 +71,6 @@ export default function RoomPage() {
           }
         } catch {}
       }
-      // No saved name, or auto-join failed (e.g. game already started) — ask them directly.
       setNeedsName(true);
     })();
   }, []);
@@ -60,7 +80,7 @@ export default function RoomPage() {
       const res = await fetch(`/api/game/${roomId}`, { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
-        setGame(data.game);
+        applyIncomingGame(data.game);
         setError("");
         return data.game;
       } else {
@@ -72,6 +92,62 @@ export default function RoomPage() {
       return null;
     }
   }, [roomId]);
+
+  function applyIncomingGame(newGame) {
+    const landed = {};
+    for (const p of newGame.players) {
+      const prev = prevPositions.current[p.id];
+      if (prev !== undefined && prev !== p.position) landed[p.id] = Date.now();
+      prevPositions.current[p.id] = p.position;
+    }
+    if (Object.keys(landed).length) {
+      setLandedPawns((prevMap) => ({ ...prevMap, ...landed }));
+      setTimeout(() => {
+        setLandedPawns((prevMap) => {
+          const copy = { ...prevMap };
+          for (const k of Object.keys(landed)) delete copy[k];
+          return copy;
+        });
+      }, 500);
+    }
+    if (newGame.cardSeq && newGame.cardSeq !== lastCardSeq.current) {
+      lastCardSeq.current = newGame.cardSeq;
+      setActiveCard(newGame.lastCard);
+      setTimeout(() => setActiveCard(null), 3200);
+    }
+    setGame(newGame);
+  }
+
+  useEffect(() => {
+    pollRef.current = setInterval(refresh, 1800);
+    return () => clearInterval(pollRef.current);
+  }, [refresh]);
+
+  async function act(type, extra = {}) {
+    if (!playerId) return { error: "Not ready" };
+    setBusy(true);
+    setError("");
+    try {
+      const isTrade = type === "proposeTrade" || type === "respondTrade" || type === "cancelTrade";
+      const url = isTrade ? `/api/game/${roomId}/trade` : `/api/game/${roomId}/action`;
+      const mappedType = { proposeTrade: "propose", respondTrade: "respond", cancelTrade: "cancel" }[type] || type;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: mappedType, playerId, ...extra }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Action failed");
+      if (type === "roll") setRollToken((t) => t + 1);
+      applyIncomingGame(data.game);
+      return { ok: true };
+    } catch (e) {
+      setError(e.message);
+      return { error: e.message };
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submitJoin() {
     if (!joinName.trim()) return;
@@ -92,31 +168,6 @@ export default function RoomPage() {
       setError(e.message);
     } finally {
       setJoining(false);
-    }
-  }
-
-  useEffect(() => {
-    pollRef.current = setInterval(refresh, 1800);
-    return () => clearInterval(pollRef.current);
-  }, [refresh]);
-
-  async function act(type, extra = {}) {
-    if (!playerId) return;
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch(`/api/game/${roomId}/action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, playerId, ...extra }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Action failed");
-      setGame(data.game);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -163,12 +214,13 @@ export default function RoomPage() {
       </Centered>
     );
   }
+
   const current = game.players[game.turnIndex];
   const isMyTurn = current && current.id === playerId;
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px 60px" }}>
-      <div style={{ width: "100%", maxWidth: 1100, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+      <div style={{ width: "100%", maxWidth: 1140, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ margin: 0 }}>🎩 Monopoly — Room {roomId}</h2>
         <button onClick={copyLink} style={btnGhost}>{copySuccess ? "✓ Copied!" : "🔗 Copy invite link"}</button>
       </div>
@@ -180,13 +232,15 @@ export default function RoomPage() {
       )}
 
       {game.status !== "lobby" && (
-        <div style={{ width: "100%", maxWidth: 1100, display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 560px", minWidth: 320 }}>
-            <Board game={game} onTileClick={setSelectedTile} />
+        <div style={{ width: "100%", maxWidth: 1140, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 580px", minWidth: 320 }}>
+            <Board game={game} onTileClick={setSelectedTile} landedPawns={landedPawns} />
           </div>
           <div style={{ flex: "1 1 320px", minWidth: 280, display: "flex", flexDirection: "column", gap: 12 }}>
             <PlayersPanel game={game} playerId={playerId} />
-            <Controls game={game} me={me} isMyTurn={isMyTurn} act={act} busy={busy} />
+            <Controls game={game} me={me} isMyTurn={isMyTurn} act={act} busy={busy} rollToken={rollToken} />
+            <TradePanel game={game} me={me} playerId={playerId} act={act} busy={busy} />
+            <PropertiesPanel game={game} me={me} />
             <Log game={game} />
           </div>
         </div>
@@ -202,6 +256,8 @@ export default function RoomPage() {
           onClose={() => setSelectedTile(null)}
         />
       )}
+
+      {activeCard && <CardModal card={activeCard} onClose={() => setActiveCard(null)} />}
     </div>
   );
 }
@@ -216,6 +272,8 @@ const btnSecondary = { padding: "10px 16px", borderRadius: 8, border: "1px solid
 
 function Lobby({ game, playerId, act, busy }) {
   const isHost = game.players[0]?.id === playerId;
+  const [cashInput, setCashInput] = useState(game.startingCash || 1500);
+
   return (
     <div style={{ background: "#151b2e", borderRadius: 14, padding: 24, maxWidth: 480, width: "100%" }}>
       <h3 style={{ marginTop: 0 }}>Players in lobby</h3>
@@ -228,8 +286,39 @@ function Lobby({ game, playerId, act, busy }) {
         ))}
       </ul>
       <p style={{ color: "#8b93ab", fontSize: 13 }}>Share the room link so friends can join before starting.</p>
+
+      <div style={{ background: "#0f1526", borderRadius: 10, padding: 14, marginBottom: 14 }}>
+        <label style={{ fontSize: 12.5, color: "#a7afc7", display: "block", marginBottom: 6 }}>
+          Starting cash per player (USD)
+        </label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="number"
+            min={200}
+            max={100000}
+            step={100}
+            value={cashInput}
+            onChange={(e) => setCashInput(e.target.value)}
+            disabled={!isHost}
+            style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #2a3352", background: "#151b2e", color: "#fff", fontSize: 14 }}
+          />
+          {isHost && (
+            <button
+              onClick={() => act("setStartingCash", { amount: cashInput })}
+              disabled={busy}
+              style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #3a4568", background: "transparent", color: "#fff", fontSize: 13 }}
+            >
+              Set
+            </button>
+          )}
+        </div>
+        <p style={{ fontSize: 11.5, color: "#6b7390", margin: "6px 0 0" }}>
+          Current: ${Number(game.startingCash || 1500).toLocaleString()} {isHost ? "" : "(host controls this)"}
+        </p>
+      </div>
+
       {isHost ? (
-        <button onClick={() => act("start")} disabled={busy || game.players.length < 2} style={{ ...btnPrimary, width: "100%", marginTop: 10, opacity: game.players.length < 2 ? 0.5 : 1 }}>
+        <button onClick={() => act("start")} disabled={busy || game.players.length < 2} style={{ ...btnPrimary, width: "100%", opacity: game.players.length < 2 ? 0.5 : 1 }}>
           {game.players.length < 2 ? "Need at least 2 players" : "Start Game"}
         </button>
       ) : (
@@ -239,77 +328,157 @@ function Lobby({ game, playerId, act, busy }) {
   );
 }
 
-function Board({ game, onTileClick }) {
+function TileVisual({ tile }) {
+  if (tile.type === "go") return (
+    <div>
+      <div style={{ fontSize: 16, fontWeight: 900, color: "#e63946", letterSpacing: 1 }}>GO</div>
+      <div style={{ fontSize: 18 }}>➡️</div>
+      <div style={{ fontSize: 8, fontWeight: 800, color: "#e63946" }}>COLLECT $200</div>
+    </div>
+  );
+  if (tile.type === "jail") return <div style={{ fontSize: 18 }}>🚔<div style={{ fontSize: 8 }}>IN JAIL / VISITING</div></div>;
+  if (tile.type === "gotojail") return <div style={{ fontSize: 20 }}>👮<div style={{ fontSize: 9, fontWeight: 700 }}>GO TO JAIL</div></div>;
+  if (tile.type === "free") return <div style={{ fontSize: 20 }}>🅿️<div style={{ fontSize: 8 }}>FREE PARKING</div></div>;
+  return null;
+}
+
+function Board({ game, onTileClick, landedPawns }) {
+  const pawnsByTile = {};
+  game.players.forEach((p, i) => {
+    if (p.bankrupt) return;
+    if (!pawnsByTile[p.position]) pawnsByTile[p.position] = [];
+    pawnsByTile[p.position].push({ ...p, colorIdx: i });
+  });
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(11, 1fr)",
-        gridTemplateRows: "repeat(11, 1fr)",
-        aspectRatio: "1 / 1",
-        width: "100%",
-        background: "#1b6b3a",
-        borderRadius: 12,
-        padding: 6,
-        gap: 2,
-      }}
-    >
-      {BOARD.map((tile) => {
-        const pos = gridPos(tile.id);
-        const own = game.ownership[tile.id];
-        const playersHere = game.players
-          .map((p, i) => ({ ...p, colorIdx: i }))
-          .filter((p) => !p.bankrupt && p.position === tile.id);
-        const isCorner = [0, 10, 20, 30].includes(tile.id);
-        return (
-          <div
-            key={tile.id}
-            onClick={() => onTileClick(tile.id)}
-            style={{
-              gridColumn: pos.col,
-              gridRow: pos.row,
-              background: "#0f1526",
-              borderRadius: 4,
-              border: own && !own.mortgaged ? `2px solid ${PLAYER_COLORS[game.players.findIndex((p) => p.id === own.owner) % PLAYER_COLORS.length]}` : "1px solid #232c46",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              cursor: "pointer",
-              position: "relative",
-              minHeight: 0,
-              minWidth: 0,
-            }}
-            title={tile.name}
-          >
-            {tile.group && (
-              <div style={{ height: isCorner ? 0 : "22%", background: GROUP_COLORS[tile.group], flexShrink: 0 }} />
-            )}
-            <div style={{ fontSize: isCorner ? 8 : 6.5, padding: 2, color: "#e8ecf4", lineHeight: 1.1, flex: 1, overflow: "hidden" }}>
-              {tile.name}
-              {tile.price && <div style={{ color: "#8b93ab" }}>${tile.price}</div>}
-              {own?.mortgaged && <div style={{ color: "#ff6b6b" }}>MTG</div>}
-              {own && (own.houses > 0 || own.hotel) && (
-                <div style={{ color: "#ffd166" }}>{own.hotel ? "🏨" : "🏠".repeat(own.houses)}</div>
-              )}
-            </div>
-            <div style={{ position: "absolute", bottom: 1, right: 1, display: "flex", flexWrap: "wrap", gap: 1, maxWidth: "90%" }}>
-              {playersHere.map((p) => (
-                <span
-                  key={p.id}
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: PLAYER_COLORS[p.colorIdx % PLAYER_COLORS.length],
-                    border: "1px solid #fff",
-                  }}
-                  title={p.name}
-                />
-              ))}
-            </div>
+    <div className="board-3d-wrap">
+      <div
+        className="board-3d"
+        style={{
+          position: "relative",
+          display: "grid",
+          gridTemplateColumns: "repeat(11, 1fr)",
+          gridTemplateRows: "repeat(11, 1fr)",
+          aspectRatio: "1 / 1",
+          width: "100%",
+          background: "radial-gradient(ellipse at 50% 45%, #1f7a44 0%, #14572f 70%, #0d3d20 100%)",
+          borderRadius: 14,
+          padding: 8,
+          gap: 2,
+          boxShadow: "0 20px 50px rgba(0,0,0,0.55), inset 0 0 40px rgba(0,0,0,0.35)",
+          border: "2px solid #0a2c18",
+        }}
+      >
+        <div
+          style={{
+            gridColumn: "2 / 11",
+            gridRow: "2 / 11",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "column",
+            color: "rgba(255,255,255,0.85)",
+            userSelect: "none",
+          }}
+        >
+          <div style={{ fontSize: "clamp(24px, 5vw, 52px)", fontWeight: 900, letterSpacing: 4, transform: "rotate(-28deg)", textShadow: "0 4px 12px rgba(0,0,0,0.5)", color: "#e63946" }}>
+            PROPERTY
           </div>
-        );
-      })}
+          <div style={{ fontSize: "clamp(10px, 1.4vw, 16px)", opacity: 0.75, marginTop: 4, letterSpacing: 2 }}>TRADING GAME</div>
+        </div>
+
+        {BOARD.map((tile) => {
+          const pos = gridPos(tile.id);
+          const own = game.ownership[tile.id];
+          const isCorner = [0, 10, 20, 30].includes(tile.id);
+          const ownerIdx = own ? game.players.findIndex((p) => p.id === own.owner) : -1;
+          return (
+            <div
+              key={tile.id}
+              onClick={() => onTileClick(tile.id)}
+              className={isCorner ? "tile-corner-3d" : "tile-3d"}
+              style={{
+                gridColumn: pos.col,
+                gridRow: pos.row,
+                background: own && !own.mortgaged ? "#fffdf6" : "#fbf8ef",
+                borderRadius: 4,
+                outline: own && !own.mortgaged ? `2px solid ${PLAYER_COLORS[ownerIdx % PLAYER_COLORS.length]}` : "none",
+                outlineOffset: -2,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                cursor: "pointer",
+                position: "relative",
+                minHeight: 0,
+                minWidth: 0,
+              }}
+              title={tile.name}
+            >
+              {tile.group && (
+                <div style={{ height: "24%", background: GROUP_COLORS[tile.group], flexShrink: 0, borderBottom: "1px solid rgba(0,0,0,0.25)" }} />
+              )}
+              <div
+                style={{
+                  fontSize: isCorner ? "clamp(6px, 0.85vw, 9px)" : "clamp(4.5px, 0.62vw, 6.5px)",
+                  padding: 2,
+                  color: "#1c1c1c",
+                  lineHeight: 1.1,
+                  flex: 1,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: isCorner ? "center" : "flex-start",
+                  justifyContent: isCorner ? "center" : "flex-start",
+                  textAlign: isCorner ? "center" : "left",
+                  fontWeight: isCorner ? 800 : 600,
+                }}
+              >
+                {isCorner ? (
+                  <TileVisual tile={tile} />
+                ) : (
+                  <>
+                    {(tile.type === "chance" || tile.type === "chest" || tile.type === "railroad" || tile.type === "utility" || tile.type === "tax") && (
+                      <div style={{ fontSize: "1.6em" }}>{TILE_ICONS[tile.type]}</div>
+                    )}
+                    <span>{tile.name}</span>
+                    {tile.price && <span style={{ color: "#5a5a5a" }}>${tile.price}</span>}
+                    {tile.type === "tax" && <span style={{ color: "#5a5a5a" }}>Pay ${tile.amount}</span>}
+                    {own?.mortgaged && <span style={{ color: "#c0392b", fontWeight: 800 }}>MORTGAGED</span>}
+                    {own && (own.houses > 0 || own.hotel) && (
+                      <span style={{ color: "#b8860b" }}>{own.hotel ? "🏨" : "🏠".repeat(own.houses)}</span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {game.players.map((p, i) => {
+          if (p.bankrupt) return null;
+          const tileGroup = pawnsByTile[p.position] || [];
+          const idxOnTile = tileGroup.findIndex((x) => x.id === p.id);
+          const pct = gridPct(p.position);
+          const centerLeft = pct.left + pct.size / 2;
+          const centerTop = pct.top + pct.size / 2;
+          const off = pawnOffset(idxOnTile);
+          const isLanded = !!landedPawns[p.id];
+          return (
+            <div
+              key={p.id}
+              className={`pawn-token${isLanded ? " landed" : ""}`}
+              style={{
+                left: `calc(${centerLeft}% + ${off.dx * 0.4}px)`,
+                top: `calc(${centerTop}% + ${off.dy * 0.4}px)`,
+                width: 16,
+                height: 16,
+                background: `radial-gradient(circle at 35% 30%, #fff8, ${PLAYER_COLORS[i % PLAYER_COLORS.length]})`,
+              }}
+              title={p.name}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -337,7 +506,7 @@ function PlayersPanel({ game, playerId }) {
             {p.name} {p.id === playerId && "(you)"} {p.bankrupt && "💀"}
             {p.inJail && !p.bankrupt && " 🔒"}
           </span>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>${p.cash}</span>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>${p.cash.toLocaleString()}</span>
         </div>
       ))}
       {game.status === "finished" && (
@@ -349,18 +518,21 @@ function PlayersPanel({ game, playerId }) {
   );
 }
 
-function Controls({ game, me, isMyTurn, act, busy }) {
+function Controls({ game, me, isMyTurn, act, busy, rollToken }) {
   if (!me) return null;
   const tile = BOARD[me.position];
   const pending = game.pendingAction;
-  const isDouble = game.dice[0] === game.dice[1];
 
   return (
     <div style={{ background: "#151b2e", borderRadius: 12, padding: 14 }}>
       <h4 style={{ margin: "0 0 10px" }}>
         {game.status === "finished" ? "Game over" : isMyTurn ? "Your turn" : `Waiting for ${game.players[game.turnIndex]?.name}...`}
       </h4>
-      <div style={{ fontSize: 28, marginBottom: 8 }}>🎲 {game.dice[0]} + {game.dice[1]}</div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+        <Dice3D value={game.dice[0]} rollToken={rollToken} size={46} />
+        <Dice3D value={game.dice[1]} rollToken={rollToken} size={46} />
+        <span style={{ fontSize: 13, color: "#8b93ab" }}>= {game.dice[0] + game.dice[1]}</span>
+      </div>
 
       {game.status === "playing" && isMyTurn && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -374,11 +546,11 @@ function Controls({ game, me, isMyTurn, act, busy }) {
             </div>
           )}
           {!me.inJail && !pending && (
-            <button style={btnPrimary} disabled={busy} onClick={() => act("roll")}>Roll Dice</button>
+            <button style={btnPrimary} disabled={busy} onClick={() => act("roll")}>🎲 Roll Dice</button>
           )}
           {pending === "awaitBuy" && (
-            <div>
-              <p style={{ fontSize: 14 }}>
+            <div className="pending-buy-glow" style={{ borderRadius: 10, padding: 10, background: "#1b2338" }}>
+              <p style={{ fontSize: 14, margin: "0 0 8px" }}>
                 Buy <strong>{tile.name}</strong> for ${tile.price}?
               </p>
               <div style={{ display: "flex", gap: 8 }}>

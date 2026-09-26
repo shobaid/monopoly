@@ -1,7 +1,100 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: #0c1220; color: #e8ecf4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 button { font-family: inherit; cursor: pointer; }
-input { font-family: inherit; }
+input, select { font-family: inherit; }
 a { color: inherit; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #384158; border-radius: 4px; }
+
+/* ---------- 3D dice ---------- */
+.die-scene { perspective: 400px; }
+.die-cube {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.9s cubic-bezier(0.25, 0.9, 0.35, 1);
+}
+.die-face {
+  position: absolute;
+  top: 0; left: 0;
+  background: linear-gradient(145deg, #ffffff, #dfe3ea);
+  border: 1px solid #b8bfcc;
+  border-radius: 8px;
+  box-shadow: inset 0 0 6px rgba(0,0,0,0.15);
+}
+.die-pip {
+  position: absolute;
+  width: 16%;
+  height: 16%;
+  margin-left: -8%;
+  margin-top: -8%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #444, #111);
+  box-shadow: 0 1px 1px rgba(255,255,255,0.4) inset;
+}
+
+/* ---------- Board 3D bevel ---------- */
+.board-3d-wrap { perspective: 1800px; }
+.board-3d {
+  transform: rotateX(0deg);
+  transition: transform 0.3s ease;
+  transform-style: preserve-3d;
+}
+.tile-3d {
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.35), inset 0 -2px 3px rgba(0,0,0,0.12), inset 0 2px 2px rgba(255,255,255,0.6);
+}
+.tile-corner-3d {
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 2px 5px rgba(0,0,0,0.45), inset 0 3px 4px rgba(255,255,255,0.5);
+}
+
+/* ---------- Pawn tokens ---------- */
+.pawn-token {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.65s cubic-bezier(0.4, 0.0, 0.2, 1), top 0.65s cubic-bezier(0.4, 0.0, 0.2, 1);
+  box-shadow: 0 3px 5px rgba(0,0,0,0.5), inset 0 2px 2px rgba(255,255,255,0.6), inset 0 -3px 4px rgba(0,0,0,0.35);
+  border: 1.5px solid rgba(0,0,0,0.5);
+  z-index: 5;
+}
+.pawn-token.landed {
+  animation: pawnLand 0.45s ease;
+}
+@keyframes pawnLand {
+  0% { transform: translate(-50%, -50%) scale(1) translateY(0); }
+  40% { transform: translate(-50%, -50%) scale(1.15) translateY(-10px); }
+  70% { transform: translate(-50%, -50%) scale(0.95) translateY(2px); }
+  100% { transform: translate(-50%, -50%) scale(1) translateY(0); }
+}
+
+/* ---------- Card flip modal ---------- */
+.card-flip-scene { perspective: 1000px; }
+.card-flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: cardFlip 0.7s ease forwards;
+}
+@keyframes cardFlip {
+  0% { transform: rotateY(180deg); }
+  100% { transform: rotateY(0deg); }
+}
+.card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 20px;
+  text-align: center;
+}
+.card-face.back { transform: rotateY(180deg); }
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(255, 209, 102, 0); }
+}
+.pending-buy-glow { animation: pulseGlow 1.4s ease infinite; }

@@ -62,6 +62,20 @@ When prompted, add the two environment variables (`UPSTASH_REDIS_REST_URL`,
    Tap any tile on the board to see its details or manage it (build/mortgage) on
    your turn.
 
+## What's new in this version
+
+- **Redesigned 3D-style board** — realistic bevels, a felt-green center, and raised tiles
+  (original artwork — not a copy of Hasbro's board/logo, since that's copyrighted).
+- **Animated 3D dice** — real CSS cubes that spin and land on the correct face.
+- **Player pawns on the board** — colored tokens that slide between tiles and bounce on landing.
+- **Chance / Community Chest card-flip animation** — pops up for everyone at the table when a card is drawn.
+- **"My Properties" panel** — see everything you own, with mortgage/house/hotel status, at a glance.
+- **Full trading** — propose a trade (cash and/or properties) to any other player; they can accept,
+  decline, or you can cancel while it's pending. Trades are validated server-side (can't offer what
+  you don't have, can't trade mortgaged/developed properties, etc.).
+- **Host-configurable starting cash** — set it in the lobby before the game starts (default $1,500).
+- All amounts are in USD ($).
+
 ## Rules implemented
 
 - Standard $1500 starting cash, passing GO collects $200.
