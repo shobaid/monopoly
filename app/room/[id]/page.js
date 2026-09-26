@@ -45,7 +45,7 @@ export default function RoomPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`/api/game/${roomId}`);
+      const res = await fetch(`/api/game/${roomId}`, { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
         setGame(data.game);
