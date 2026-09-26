@@ -22,24 +22,36 @@ export default function RoomPage() {
   const [selectedTile, setSelectedTile] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
   const pollRef = useRef(null);
+  const [needsName, setNeedsName] = useState(false);
+  const [joinName, setJoinName] = useState("");
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     const pid = getOrCreatePlayerId();
     setPlayerId(pid);
     const name = localStorage.getItem("monopoly_name");
-    // If this player isn't in the room yet (e.g. shared link opened fresh), try to join with saved name.
     (async () => {
-      await refresh();
+      const g = await refresh();
+      if (!g) return;
+      const alreadyIn = g.players.some((p) => p.id === pid);
+      if (alreadyIn) return;
       if (name) {
+        // We've joined a room before on this device — try auto-rejoining with that name.
         try {
-          await fetch(`/api/game/${roomId}/join`, {
+          const res = await fetch(`/api/game/${roomId}/join`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, playerId: pid }),
           });
+          if (res.ok) {
+            const data = await res.json();
+            setGame(data.game);
+            return;
+          }
         } catch {}
       }
-      refresh();
+      // No saved name, or auto-join failed (e.g. game already started) — ask them directly.
+      setNeedsName(true);
     })();
   }, []);
 
@@ -50,13 +62,38 @@ export default function RoomPage() {
       if (res.ok) {
         setGame(data.game);
         setError("");
+        return data.game;
       } else {
         setError(data.error || "Room not found");
+        return null;
       }
     } catch (e) {
       setError("Connection error");
+      return null;
     }
   }, [roomId]);
+
+  async function submitJoin() {
+    if (!joinName.trim()) return;
+    setJoining(true);
+    setError("");
+    try {
+      localStorage.setItem("monopoly_name", joinName.trim());
+      const res = await fetch(`/api/game/${roomId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: joinName.trim(), playerId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to join room");
+      setGame(data.game);
+      setNeedsName(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setJoining(false);
+    }
+  }
 
   useEffect(() => {
     pollRef.current = setInterval(refresh, 1800);
@@ -102,6 +139,30 @@ export default function RoomPage() {
   if (!game) return <Centered><p>Loading room...</p></Centered>;
 
   const me = game.players.find((p) => p.id === playerId);
+
+  if (needsName && !me) {
+    return (
+      <Centered>
+        <div style={{ background: "#151b2e", borderRadius: 14, padding: 28, width: 340, maxWidth: "90vw" }}>
+          <h3 style={{ marginTop: 0 }}>Join Room {roomId}</h3>
+          <p style={{ color: "#8b93ab", fontSize: 13, marginTop: -6 }}>Enter your name to join this game.</p>
+          <input
+            value={joinName}
+            onChange={(e) => setJoinName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitJoin()}
+            placeholder="Your name"
+            maxLength={20}
+            autoFocus
+            style={{ width: "100%", padding: "12px 14px", marginBottom: 14, borderRadius: 10, border: "1px solid #2a3352", background: "#0f1526", color: "#fff", fontSize: 16 }}
+          />
+          <button onClick={submitJoin} disabled={joining || !joinName.trim()} style={{ ...btnPrimary, width: "100%" }}>
+            {joining ? "Joining..." : "Join Game"}
+          </button>
+          {error && <p style={{ color: "#ff6b6b", marginTop: 12, fontSize: 13 }}>{error}</p>}
+        </div>
+      </Centered>
+    );
+  }
   const current = game.players[game.turnIndex];
   const isMyTurn = current && current.id === playerId;
 

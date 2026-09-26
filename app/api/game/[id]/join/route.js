@@ -1,9 +1,9 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 import { NextResponse } from "next/server";
 import { addPlayer } from "../../../../../lib/engine";
 import { loadGame, saveGame } from "../../../../../lib/store";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function POST(req, { params }) {
   try {
